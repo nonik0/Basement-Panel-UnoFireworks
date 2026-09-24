@@ -3,82 +3,178 @@
 #include <Adafruit_GFX.h>
 #include "Adafruit_LEDBackpack.h"
 
-static const uint8_t PROGMEM
-  smile_bmp[] =
-  { B00111100,
-    B01000010,
-    B10100101,
-    B10000001,
-    B10100101,
-    B10011001,
-    B01000010,
-    B00111100 },
-  neutral_bmp[] =
-  { B00111100,
-    B01000010,
-    B10100101,
-    B10000001,
-    B10111101,
-    B10000001,
-    B01000010,
-    B00111100 },
-  frown_bmp[] =
-  { B00111100,
-    B01000010,
-    B10100101,
-    B10000001,
-    B10011001,
-    B10100101,
-    B01000010,
-    B00111100 };
-
 // Display
 static const uint8_t DISPLAY_WIDTH = 8;
 static const uint8_t DISPLAY_HEIGHT = 32;
-static const uint8_t MATRIX_SIZE = 8;
 
+static const uint8_t MATRIX_SIZE = 8;
 static const uint8_t MATRIX1_ADDRESS = 0x70;
 static const uint8_t MATRIX2_ADDRESS = 0x72;
 static const uint8_t MATRIX3_ADDRESS = 0x73;
 static const uint8_t MATRIX4_ADDRESS = 0x71;
-
 static const uint8_t MATRIX_BRIGHTNESS = 8;
 
 // Animation
 static const uint8_t MAX_FIREWORKS = 1;
-static const uint8_t MAX_PARTICLES = 24;
 
-static const uint16_t FRAME_DELAY_MS = 30;
+static const uint8_t MAX_OUTER_PARTICLES = 24;
+static const uint8_t MAX_INNER_PARTICLES = 12;
+static const uint8_t MAX_CORE_PARTICLES = 8;
+
+static const uint16_t FRAME_DELAY_MS = 40;
 static const float PHYSICS_FRAME_MS = 16.0f;
 static const float MAX_DT = 3.0f;
 
-// Rocket physics
+// Firework status LEDs
+static const uint32_t FIREWORK_STARTUP_MS = 1000;
+static const uint16_t FIREWORK_PAUSE_MS = 200;
+static const uint8_t FIREWORK_STATUS_1_PIN = 4; // TODO: atmega16u2 controls TX/RX LEDs, need a custom firmware for that
+static const uint8_t FIREWORK_STATUS_2_PIN = 5;
+static const uint8_t FIREWORK_STATUS_3_PIN = LED_BUILTIN;
+
+// Rocket
 static const float ROCKET_START_Y = DISPLAY_HEIGHT - 1;
 static const float ROCKET_START_VELOCITY = -0.25f;
 static const float ROCKET_ACCELERATION = -0.035f;
+static const uint8_t ROCKET_EXPLODE_MIN_HEIGHT = 2;
+static const uint8_t ROCKET_EXPLODE_MAX_HEIGHT = 5;
 
-static const uint8_t ROCKET_MIN_HEIGHT = 2;
-static const uint8_t ROCKET_MAX_HEIGHT = 7;
+// Particle direction
+static const int8_t PARTICLE_DIRECTION_MIN = -100;
+static const int8_t PARTICLE_DIRECTION_MAX = 100;
+static const float PARTICLE_DIRECTION_SCALE = 100.0f;
 
-// Particle physics
-static const int8_t PARTICLE_VX_MIN = -10;
-static const int8_t PARTICLE_VX_MAX = 10;
-static const int8_t PARTICLE_VY_MIN = -12;
-static const int8_t PARTICLE_VY_MAX = 3;
+// Particle fade
+static const uint8_t OUTER_FADE_LIFE = 12;
+static const uint8_t OUTER_FADE_RANDOM = 10;
 
-static const float PARTICLE_VELOCITY_SCALE = 10.0f;
-static const float PARTICLE_GRAVITY = 0.045f;
+static const uint8_t INNER_FADE_LIFE = 10;
+static const uint8_t INNER_FADE_RANDOM = 8;
 
-static const uint8_t PARTICLE_MIN_LIFE = 24;
-static const uint8_t PARTICLE_MAX_LIFE = 40;
-
-static const uint8_t PARTICLE_FADE_LIFE = 12;
-static const uint8_t PARTICLE_FADE_RANDOM = 10;
+static const uint8_t CORE_FADE_LIFE = 4;
+static const uint8_t CORE_FADE_RANDOM = 4;
 
 // Top matrix column mapping
 static const uint8_t TOP_COLUMN[DISPLAY_WIDTH] = {
   1, 2, 3, 3, 4, 4, 5, 6
 };
+
+// Firework styles
+struct FireworkStyle {
+  uint8_t color;
+
+  // Outer particles
+  float outer_speed_min;
+  float outer_speed_max;
+  float outer_gravity;
+  float outer_drag;
+  uint8_t outer_life_min;
+  uint8_t outer_life_max;
+
+  // Middle particles
+  float inner_speed_min;
+  float inner_speed_max;
+  float inner_gravity;
+  float inner_drag;
+  uint8_t inner_life_min;
+  uint8_t inner_life_max;
+
+  // Core particles
+  float core_speed_min;
+  float core_speed_max;
+  float core_gravity;
+  uint8_t core_life_min;
+  uint8_t core_life_max;
+};
+
+static const FireworkStyle FIREWORK_STYLES[] = {
+  // Classic
+  {
+    LED_RED,
+
+    // Outer
+    0.45f,
+    0.70f,
+    0.025f,
+    0.980f,
+    24,
+    40,
+
+    // Middle
+    0.28f,
+    0.45f,
+    0.015f,
+    0.975f,
+    18,
+    30,
+
+    // Core
+    0.04f,
+    0.07f,
+    0.001f,
+    6,
+    10
+  },
+
+  // Wide
+  {
+    LED_YELLOW,
+
+    // Outer
+    0.55f,
+    0.80f,
+    0.030f,
+    0.985f,
+    20,
+    34,
+
+    // Middle
+    0.32f,
+    0.50f,
+    0.018f,
+    0.980f,
+    16,
+    28,
+
+    // Core
+    0.05f,
+    0.08f,
+    0.001f,
+    6,
+    9
+  },
+
+  // Floaty
+  {
+    LED_GREEN,
+
+    // Outer
+    0.25f,
+    0.45f,
+    0.018f,
+    0.955f,
+    35,
+    55,
+
+    // Middle
+    0.16f,
+    0.30f,
+    0.010f,
+    0.950f,
+    24,
+    38,
+
+    // Core
+    0.03f,
+    0.06f,
+    0.0005f,
+    7,
+    10
+  }
+};
+
+static const uint8_t FIREWORK_STYLE_COUNT =
+  sizeof(FIREWORK_STYLES) / sizeof(FIREWORK_STYLES[0]);
 
 Adafruit_BicolorMatrix matrix1 = Adafruit_BicolorMatrix();
 Adafruit_8x8matrix matrix2 = Adafruit_8x8matrix();
@@ -86,6 +182,8 @@ Adafruit_8x8matrix matrix3 = Adafruit_8x8matrix();
 Adafruit_8x8matrix matrix4 = Adafruit_8x8matrix();
 
 GFXcanvas1 display(DISPLAY_WIDTH, DISPLAY_HEIGHT);
+
+uint8_t display_color[DISPLAY_HEIGHT][DISPLAY_WIDTH];
 
 struct Particle {
   float x;
@@ -97,7 +195,15 @@ struct Particle {
 
 class Firework {
 public:
+  enum State {
+    WAITING,
+    ROCKET,
+    PARTICLES
+  };
+
   void start() {
+    style = &FIREWORK_STYLES[random(0, FIREWORK_STYLE_COUNT)];
+
     rocket_x = random(0, DISPLAY_WIDTH);
     rocket_y = ROCKET_START_Y;
     rocket_vy = ROCKET_START_VELOCITY;
@@ -105,22 +211,27 @@ public:
     // Pick a random explosion height, but leave room above
     // the firework so the explosion isn't clipped at the top.
     rocket_target_y = random(
-      ROCKET_MIN_HEIGHT,
-      ROCKET_MAX_HEIGHT + 1
+      ROCKET_EXPLODE_MIN_HEIGHT,
+      ROCKET_EXPLODE_MAX_HEIGHT + 1
     );
 
-    rocket_active = true;
+    state = ROCKET;
   }
 
   void update(float dt) {
-    if (rocket_active)
+    if (state == WAITING)
+      updateWaiting(dt);
+    else if (state == ROCKET)
       updateRocket(dt);
     else
       updateParticles(dt);
   }
 
   void draw() const {
-    if (rocket_active) {
+    if (state == WAITING)
+      return;
+
+    if (state == ROCKET) {
       int x = constrain(
         (int)round(rocket_x),
         0,
@@ -134,37 +245,87 @@ public:
       );
 
       display.drawPixel(x, y, HIGH);
+      display_color[y][x] = style->color;
       return;
     }
 
-    for (uint8_t i = 0; i < MAX_PARTICLES; i++) {
-      if (!particles[i].life)
+    // Outer explosion particles.
+    for (uint8_t i = 0; i < MAX_OUTER_PARTICLES; i++) {
+      if (!outer_particles[i].life)
         continue;
 
-      int x = round(particles[i].x);
-      int y = round(particles[i].y);
+      drawParticle(
+        outer_particles[i],
+        OUTER_FADE_LIFE,
+        OUTER_FADE_RANDOM
+      );
+    }
 
-      if (x < 0 || x >= DISPLAY_WIDTH ||
-          y < 0 || y >= DISPLAY_HEIGHT)
+    // Middle particles fill the space between the core and outer shell.
+    for (uint8_t i = 0; i < MAX_INNER_PARTICLES; i++) {
+      if (!inner_particles[i].life)
         continue;
 
-      // Fade by making older particles increasingly intermittent.
-      if (particles[i].life < PARTICLE_FADE_LIFE &&
-          random(0, PARTICLE_FADE_RANDOM) > particles[i].life)
+      drawParticle(
+        inner_particles[i],
+        INNER_FADE_LIFE,
+        INNER_FADE_RANDOM
+      );
+    }
+
+    // Slow core particles.
+    for (uint8_t i = 0; i < MAX_CORE_PARTICLES; i++) {
+      if (!core_particles[i].life)
         continue;
 
-      display.drawPixel(x, y, HIGH);
+      drawParticle(
+        core_particles[i],
+        CORE_FADE_LIFE,
+        CORE_FADE_RANDOM
+      );
     }
   }
 
-private:
-  Particle particles[MAX_PARTICLES];
+  bool isRocket() const {
+    return state == ROCKET;
+  }
 
-  bool rocket_active = false;
+  bool isParticles() const {
+    return state == PARTICLES;
+  }
+
+  bool isRocketFirstHalf() const {
+    if (state != ROCKET)
+      return false;
+
+    float total_distance = ROCKET_START_Y - rocket_target_y;
+    float distance = ROCKET_START_Y - rocket_y;
+
+    return distance < total_distance * 0.5f;
+  }
+
+private:
+  Particle outer_particles[MAX_OUTER_PARTICLES];
+  Particle inner_particles[MAX_INNER_PARTICLES];
+  Particle core_particles[MAX_CORE_PARTICLES];
+
+  const FireworkStyle *style = &FIREWORK_STYLES[0];
+
+  State state = WAITING;
+
   float rocket_x = 0;
   float rocket_y = 0;
   float rocket_vy = 0;
   uint8_t rocket_target_y = 0;
+
+  float wait_remaining_ms = 0;
+
+  void updateWaiting(float dt) {
+    wait_remaining_ms -= dt * PHYSICS_FRAME_MS;
+
+    if (wait_remaining_ms <= 0)
+      start();
+  }
 
   void updateRocket(float dt) {
     rocket_vy += ROCKET_ACCELERATION * dt;
@@ -177,48 +338,190 @@ private:
   void updateParticles(float dt) {
     bool particles_alive = false;
 
-    for (uint8_t i = 0; i < MAX_PARTICLES; i++) {
-      if (!particles[i].life)
+    // Outer particles.
+    for (uint8_t i = 0; i < MAX_OUTER_PARTICLES; i++) {
+      if (!outer_particles[i].life)
         continue;
 
       particles_alive = true;
 
-      particles[i].vy += PARTICLE_GRAVITY * dt;
-      particles[i].x += particles[i].vx * dt;
-      particles[i].y += particles[i].vy * dt;
+      outer_particles[i].vx *= style->outer_drag;
+      outer_particles[i].vy *= style->outer_drag;
 
-      particles[i].life--;
+      outer_particles[i].vy += style->outer_gravity * dt;
+      outer_particles[i].x += outer_particles[i].vx * dt;
+      outer_particles[i].y += outer_particles[i].vy * dt;
+
+      outer_particles[i].life--;
     }
 
-    if (!particles_alive)
-      start();
+    // Middle particles.
+    for (uint8_t i = 0; i < MAX_INNER_PARTICLES; i++) {
+      if (!inner_particles[i].life)
+        continue;
+
+      particles_alive = true;
+
+      inner_particles[i].vx *= style->inner_drag;
+      inner_particles[i].vy *= style->inner_drag;
+
+      inner_particles[i].vy += style->inner_gravity * dt;
+      inner_particles[i].x += inner_particles[i].vx * dt;
+      inner_particles[i].y += inner_particles[i].vy * dt;
+
+      inner_particles[i].life--;
+    }
+
+    // Core particles.
+    for (uint8_t i = 0; i < MAX_CORE_PARTICLES; i++) {
+      if (!core_particles[i].life)
+        continue;
+
+      particles_alive = true;
+
+      core_particles[i].vy += style->core_gravity * dt;
+      core_particles[i].x += core_particles[i].vx * dt;
+      core_particles[i].y += core_particles[i].vy * dt;
+
+      core_particles[i].life--;
+    }
+
+    if (!particles_alive) {
+      state = WAITING;
+      wait_remaining_ms = FIREWORK_PAUSE_MS;
+    }
   }
 
   void explode() {
-    for (uint8_t i = 0; i < MAX_PARTICLES; i++) {
-      particles[i].x = rocket_x;
-      particles[i].y = rocket_y;
-
-      // Give every particle an outward velocity.
-      particles[i].vx =
-        random(PARTICLE_VX_MIN, PARTICLE_VX_MAX + 1) /
-        PARTICLE_VELOCITY_SCALE;
-
-      particles[i].vy =
-        random(PARTICLE_VY_MIN, PARTICLE_VY_MAX + 1) /
-        PARTICLE_VELOCITY_SCALE;
-
-      particles[i].life =
-        random(PARTICLE_MIN_LIFE, PARTICLE_MAX_LIFE + 1);
+    // Outer particles.
+    for (uint8_t i = 0; i < MAX_OUTER_PARTICLES; i++) {
+      initializeParticle(
+        outer_particles[i],
+        style->outer_speed_min,
+        style->outer_speed_max,
+        style->outer_life_min,
+        style->outer_life_max
+      );
     }
 
-    rocket_active = false;
+    // Middle particles.
+    for (uint8_t i = 0; i < MAX_INNER_PARTICLES; i++) {
+      initializeParticle(
+        inner_particles[i],
+        style->inner_speed_min,
+        style->inner_speed_max,
+        style->inner_life_min,
+        style->inner_life_max
+      );
+    }
+
+    // Core particles.
+    for (uint8_t i = 0; i < MAX_CORE_PARTICLES; i++) {
+      initializeParticle(
+        core_particles[i],
+        style->core_speed_min,
+        style->core_speed_max,
+        style->core_life_min,
+        style->core_life_max
+      );
+    }
+
+    state = PARTICLES;
+  }
+
+  void initializeParticle(
+    Particle &particle,
+    float speed_min,
+    float speed_max,
+    uint8_t life_min,
+    uint8_t life_max
+  ) {
+    particle.x = rocket_x;
+    particle.y = rocket_y;
+
+    float dx;
+    float dy;
+    float magnitude;
+
+    do {
+      dx = random(
+        PARTICLE_DIRECTION_MIN,
+        PARTICLE_DIRECTION_MAX + 1
+      ) / PARTICLE_DIRECTION_SCALE;
+
+      dy = random(
+        PARTICLE_DIRECTION_MIN,
+        PARTICLE_DIRECTION_MAX + 1
+      ) / PARTICLE_DIRECTION_SCALE;
+
+      magnitude = sqrt(dx * dx + dy * dy);
+    } while (magnitude < 0.2f);
+
+    float speed = random(
+      (int)(speed_min * 100.0f),
+      (int)(speed_max * 100.0f) + 1
+    ) / 100.0f;
+
+    particle.vx = dx / magnitude * speed;
+    particle.vy = dy / magnitude * speed;
+
+    particle.life = random(
+      life_min,
+      life_max + 1
+    );
+  }
+
+  void drawParticle(
+    const Particle &particle,
+    uint8_t fade_life,
+    uint8_t fade_random
+  ) const {
+    int x = round(particle.x);
+    int y = round(particle.y);
+
+    if (x < 0 || x >= DISPLAY_WIDTH ||
+        y < 0 || y >= DISPLAY_HEIGHT)
+      return;
+
+    // Fade by making older particles increasingly intermittent.
+    if (particle.life < fade_life &&
+        random(0, fade_random) > particle.life)
+      return;
+
+    display.drawPixel(x, y, HIGH);
+    display_color[y][x] = style->color;
   }
 };
 
 Firework fireworks[MAX_FIREWORKS];
 
 uint32_t last_frame = 0;
+uint32_t startup_time = 0;
+bool animation_started = false;
+
+void setStatusLEDs(bool rx, bool tx, bool led) {
+  digitalWrite(FIREWORK_STATUS_1_PIN, rx ? HIGH : LOW);
+  digitalWrite(FIREWORK_STATUS_2_PIN, tx ? HIGH : LOW);
+  digitalWrite(FIREWORK_STATUS_3_PIN, led ? HIGH : LOW);
+}
+
+void updateStatusLEDs() {
+  bool rx = false;
+  bool tx = false;
+  bool led = false;
+
+  // Only show status of primary firework.
+  if (fireworks[0].isRocket()) {
+    if (fireworks[0].isRocketFirstHalf())
+      rx = true;
+    else
+      tx = true;
+  } else if (fireworks[0].isParticles()) {
+    led = true;
+  }
+
+  setStatusLEDs(rx, tx, led);
+}
 
 void drawDisplay() {
   matrix1.clear();
@@ -240,19 +543,35 @@ void drawDisplay() {
 
       switch (matrix) {
         case 0:
-          matrix1.drawPixel(matrix_x, matrix_y, LED_YELLOW);
+          matrix1.drawPixel(
+            matrix_x,
+            matrix_y,
+            display_color[y][x]
+          );
           break;
 
         case 1:
-          matrix2.drawPixel(matrix_x, matrix_y, LED_ON);
+          matrix2.drawPixel(
+            matrix_x,
+            matrix_y,
+            LED_ON
+          );
           break;
 
         case 2:
-          matrix3.drawPixel(matrix_x, matrix_y, LED_ON);
+          matrix3.drawPixel(
+            matrix_x,
+            matrix_y,
+            LED_ON
+          );
           break;
 
         case 3:
-          matrix4.drawPixel(matrix_x, matrix_y, LED_ON);
+          matrix4.drawPixel(
+            matrix_x,
+            matrix_y,
+            LED_ON
+          );
           break;
       }
     }
@@ -271,6 +590,11 @@ void updateFireworks(float dt) {
 
 void drawFireworks() {
   display.fillScreen(LOW);
+
+  for (uint8_t y = 0; y < DISPLAY_HEIGHT; y++) {
+    for (uint8_t x = 0; x < DISPLAY_WIDTH; x++)
+      display_color[y][x] = LED_OFF;
+  }
 
   for (uint8_t i = 0; i < MAX_FIREWORKS; i++)
     fireworks[i].draw();
@@ -313,15 +637,44 @@ void setup() {
 
   randomSeed(analogRead(A0));
 
-  for (uint8_t i = 0; i < MAX_FIREWORKS; i++)
-    fireworks[i].start();
+  // Do not touch RX/TX/LED_BUILTIN during startup.
+  // This gives the bootloader/programming interface time
+  // to finish before these pins become status outputs.
+  startup_time = millis();
+
+  display.fillScreen(LOW);
+
+  for (uint8_t y = 0; y < DISPLAY_HEIGHT; y++) {
+    for (uint8_t x = 0; x < DISPLAY_WIDTH; x++)
+      display_color[y][x] = LED_OFF;
+  }
+
+  drawDisplay();
 }
 
 void loop() {
   uint32_t now = millis();
 
-  if (last_frame == 0)
+  // Leave the programming/status pins alone for a few seconds
+  // after reset so uploading/reprogramming is not disturbed.
+  if (!animation_started) {
+    if (now - startup_time < FIREWORK_STARTUP_MS) {
+      delay(FRAME_DELAY_MS);
+      return;
+    }
+
+    pinMode(FIREWORK_STATUS_1_PIN, OUTPUT);
+    pinMode(FIREWORK_STATUS_2_PIN, OUTPUT);
+    pinMode(FIREWORK_STATUS_3_PIN, OUTPUT);
+
+    setStatusLEDs(false, false, false);
+
+    for (uint8_t i = 0; i < MAX_FIREWORKS; i++)
+      fireworks[i].start();
+
+    animation_started = true;
     last_frame = now;
+  }
 
   float dt = (now - last_frame) / PHYSICS_FRAME_MS;
   last_frame = now;
@@ -331,6 +684,7 @@ void loop() {
     dt = MAX_DT;
 
   updateFireworks(dt);
+  updateStatusLEDs();
   drawFireworks();
 
   delay(FRAME_DELAY_MS);
