@@ -13,9 +13,9 @@ static const uint8_t MATRIX1_ADDRESS = 0x70;
 static const uint8_t MATRIX2_ADDRESS = 0x72;
 static const uint8_t MATRIX3_ADDRESS = 0x73;
 static const uint8_t MATRIX4_ADDRESS = 0x71;
-static const uint8_t MATRIX_BRIGHTNESS = 8;
+static const uint8_t MATRIX_BRIGHTNESS = 2;
 
-// Animation
+// Fireworks animation
 static const uint8_t MAX_FIREWORKS = 1;
 
 static const uint8_t MAX_OUTER_PARTICLES = 24;
@@ -27,7 +27,6 @@ static const float PHYSICS_FRAME_MS = 16.0f;
 static const float MAX_DT = 3.0f;
 
 // Firework status LEDs
-static const uint32_t FIREWORK_STARTUP_MS = 1000;
 static const uint16_t FIREWORK_PAUSE_MS = 200;
 //static const uint8_t FIREWORK_STATUS_1_PIN = 4; // controlled by 16u2 firmware
 //static const uint8_t FIREWORK_STATUS_2_PIN = 5;
@@ -511,8 +510,6 @@ private:
 Firework fireworks[MAX_FIREWORKS];
 
 uint32_t last_frame = 0;
-uint32_t startup_time = 0;
-bool animation_started = false;
 bool last_status_rx = false;
 bool last_status_tx = false;
 bool last_status_led = false;
@@ -648,30 +645,7 @@ void setup() {
   matrix3.setRotation(1);
   matrix4.setRotation(1);
 
-  // matrices are stacked in column
-  // matrix 1 is 8x8 bicolor matrix with larger/wider pixels on top
-  // matrix2-4 are smaller 8x8 matrices stacked in a column
-
-  // TODO: form a virtual 8x32 matrix and draw to it
-  // matrix1 is larger, so if we have a dot move up, the col-to-col
-  // mapping for matrix2 to matrix1 is: 1 2 3 3|4 4 5 6
-  // to validate we can have a basic animation that moves a dot up each column from bottom
-
-  // TODO: after setting up grid, do a firework animation
-  // 1. a dot moves up a random column, ideally with some acceleration similar to a rocket
-  // 2. when it reaches the top, it explodes into a random pattern of dots that move outwards and fade away
-
-  // TODO: once we have a basic firework we can add more kinds of firework colors and patterns, i.e.
-  // color: reg, yellow, green, or a mix of 2 or all of them, or some thing change colors
-  // pattern: sparkling glittery fireworks, fireworks with straight paths,
-  // speed: fast and slow, some with fast particles, some with slow
-
   randomSeed(analogRead(A0));
-
-  // Do not touch RX/TX/LED_BUILTIN during startup.
-  // This gives the bootloader/programming interface time
-  // to finish before these pins become status outputs.
-  startup_time = millis();
 
   display.fillScreen(LOW);
 
@@ -680,31 +654,18 @@ void setup() {
       display_color[y][x] = LED_OFF;
   }
 
+  pinMode(FIREWORK_STATUS_3_PIN, OUTPUT);
+
+  setStatusLEDs(false, false, false);
+
+  for (uint8_t i = 0; i < MAX_FIREWORKS; i++)
+    fireworks[i].start();
+
   drawDisplay();
 }
 
 void loop() {
   uint32_t now = millis();
-
-  // Leave the programming/status pins alone for a few seconds
-  // after reset so uploading/reprogramming is not disturbed.
-  if (!animation_started) {
-    if (now - startup_time < FIREWORK_STARTUP_MS) {
-      delay(FRAME_DELAY_MS);
-      return;
-    }
-
-    pinMode(FIREWORK_STATUS_3_PIN, OUTPUT);
-
-    setStatusLEDs(false, false, false);
-
-    for (uint8_t i = 0; i < MAX_FIREWORKS; i++)
-      fireworks[i].start();
-
-    animation_started = true;
-    last_frame = now;
-  }
-
   float dt = (now - last_frame) / PHYSICS_FRAME_MS;
   last_frame = now;
 
