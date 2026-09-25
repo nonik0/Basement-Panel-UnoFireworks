@@ -1,4 +1,5 @@
 #include <Arduino.h>
+#include <avr/pgmspace.h>
 #include <Wire.h>
 #include <Adafruit_GFX.h>
 #include "Adafruit_LEDBackpack.h"
@@ -28,8 +29,8 @@ static const float MAX_DT = 3.0f;
 // Firework status LEDs
 static const uint32_t FIREWORK_STARTUP_MS = 1000;
 static const uint16_t FIREWORK_PAUSE_MS = 200;
-static const uint8_t FIREWORK_STATUS_1_PIN = 4; // TODO: atmega16u2 controls TX/RX LEDs, need a custom firmware for that
-static const uint8_t FIREWORK_STATUS_2_PIN = 5;
+//static const uint8_t FIREWORK_STATUS_1_PIN = 4; // controlled by 16u2 firmware
+//static const uint8_t FIREWORK_STATUS_2_PIN = 5;
 static const uint8_t FIREWORK_STATUS_3_PIN = LED_BUILTIN;
 
 // Rocket
@@ -54,8 +55,8 @@ static const uint8_t INNER_FADE_RANDOM = 8;
 static const uint8_t CORE_FADE_LIFE = 4;
 static const uint8_t CORE_FADE_RANDOM = 4;
 
-// Top matrix column mapping
-static const uint8_t TOP_COLUMN[DISPLAY_WIDTH] = {
+// Top matrix column mapping.
+static const uint8_t TOP_COLUMN[DISPLAY_WIDTH] PROGMEM = {
   1, 2, 3, 3, 4, 4, 5, 6
 };
 
@@ -87,7 +88,7 @@ struct FireworkStyle {
   uint8_t core_life_max;
 };
 
-static const FireworkStyle FIREWORK_STYLES[] = {
+static const FireworkStyle FIREWORK_STYLES[] PROGMEM = {
   // Classic
   {
     LED_RED,
@@ -183,7 +184,7 @@ Adafruit_8x8matrix matrix4 = Adafruit_8x8matrix();
 
 GFXcanvas1 display(DISPLAY_WIDTH, DISPLAY_HEIGHT);
 
-uint8_t display_color[DISPLAY_HEIGHT][DISPLAY_WIDTH];
+uint8_t display_color[MATRIX_SIZE][DISPLAY_WIDTH];
 
 struct Particle {
   float x;
@@ -202,7 +203,15 @@ public:
   };
 
   void start() {
-    style = &FIREWORK_STYLES[random(0, FIREWORK_STYLE_COUNT)];
+    // RAM NOTE: bulk-copy one style record out of flash (PROGMEM) into this instance's
+    // own RAM-resident storage. Every existing "style->field" access below is unchanged -
+    // only this assignment and the style_storage/style member declarations differ from
+    // the pointer-into-a-RAM-resident-table version.
+    memcpy_P(
+      &style_storage,
+      &FIREWORK_STYLES[random(0, FIREWORK_STYLE_COUNT)],
+      sizeof(FireworkStyle)
+    );
 
     rocket_x = random(0, DISPLAY_WIDTH);
     rocket_y = ROCKET_START_Y;
@@ -245,7 +254,10 @@ public:
       );
 
       display.drawPixel(x, y, HIGH);
-      display_color[y][x] = style->color;
+
+      if (y < MATRIX_SIZE)
+        display_color[y][x] = style->color;
+
       return;
     }
 
@@ -309,7 +321,8 @@ private:
   Particle inner_particles[MAX_INNER_PARTICLES];
   Particle core_particles[MAX_CORE_PARTICLES];
 
-  const FireworkStyle *style = &FIREWORK_STYLES[0];
+  FireworkStyle style_storage{};
+  const FireworkStyle *style = &style_storage;
 
   State state = WAITING;
 
@@ -489,7 +502,9 @@ private:
       return;
 
     display.drawPixel(x, y, HIGH);
-    display_color[y][x] = style->color;
+
+    if (y < MATRIX_SIZE)
+      display_color[y][x] = style->color;
   }
 };
 
@@ -498,10 +513,14 @@ Firework fireworks[MAX_FIREWORKS];
 uint32_t last_frame = 0;
 uint32_t startup_time = 0;
 bool animation_started = false;
+bool last_status_rx = false;
+bool last_status_tx = false;
+bool last_status_led = false;
+bool status_leds_initialized = false;
 
 void setStatusLEDs(bool rx, bool tx, bool led) {
-  digitalWrite(FIREWORK_STATUS_1_PIN, rx ? HIGH : LOW);
-  digitalWrite(FIREWORK_STATUS_2_PIN, tx ? HIGH : LOW);
+  // communicate over serial to custom 16u2 firmware to control TX/RX LEDs
+  Serial.write(0xA0 | (tx << 2) | rx);
   digitalWrite(FIREWORK_STATUS_3_PIN, led ? HIGH : LOW);
 }
 
@@ -520,7 +539,17 @@ void updateStatusLEDs() {
     led = true;
   }
 
-  setStatusLEDs(rx, tx, led);
+  if (!status_leds_initialized ||
+      rx != last_status_rx ||
+      tx != last_status_tx ||
+      led != last_status_led) {
+    setStatusLEDs(rx, tx, led);
+
+    last_status_rx = rx;
+    last_status_tx = tx;
+    last_status_led = led;
+    status_leds_initialized = true;
+  }
 }
 
 void drawDisplay() {
@@ -539,7 +568,7 @@ void drawDisplay() {
       uint8_t matrix_x = x;
 
       if (matrix == 0)
-        matrix_x = TOP_COLUMN[x];
+        matrix_x = pgm_read_byte(&TOP_COLUMN[x]);
 
       switch (matrix) {
         case 0:
@@ -591,7 +620,7 @@ void updateFireworks(float dt) {
 void drawFireworks() {
   display.fillScreen(LOW);
 
-  for (uint8_t y = 0; y < DISPLAY_HEIGHT; y++) {
+  for (uint8_t y = 0; y < MATRIX_SIZE; y++) {
     for (uint8_t x = 0; x < DISPLAY_WIDTH; x++)
       display_color[y][x] = LED_OFF;
   }
@@ -603,6 +632,8 @@ void drawFireworks() {
 }
 
 void setup() {
+  Serial.begin(9600);
+
   matrix1.begin(MATRIX1_ADDRESS);
   matrix2.begin(MATRIX2_ADDRESS);
   matrix3.begin(MATRIX3_ADDRESS);
@@ -644,7 +675,7 @@ void setup() {
 
   display.fillScreen(LOW);
 
-  for (uint8_t y = 0; y < DISPLAY_HEIGHT; y++) {
+  for (uint8_t y = 0; y < MATRIX_SIZE; y++) {
     for (uint8_t x = 0; x < DISPLAY_WIDTH; x++)
       display_color[y][x] = LED_OFF;
   }
@@ -663,8 +694,6 @@ void loop() {
       return;
     }
 
-    pinMode(FIREWORK_STATUS_1_PIN, OUTPUT);
-    pinMode(FIREWORK_STATUS_2_PIN, OUTPUT);
     pinMode(FIREWORK_STATUS_3_PIN, OUTPUT);
 
     setStatusLEDs(false, false, false);
