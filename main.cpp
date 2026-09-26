@@ -235,7 +235,9 @@ public:
       updateParticles(dt);
   }
 
-  void draw() const {
+  void draw() {
+    any_visible = false;
+
     if (state == WAITING)
       return;
 
@@ -265,11 +267,12 @@ public:
       if (!outer_particles[i].life)
         continue;
 
-      drawParticle(
+      if (drawParticle(
         outer_particles[i],
         OUTER_FADE_LIFE,
         OUTER_FADE_RANDOM
-      );
+      ))
+        any_visible = true;
     }
 
     // Middle particles fill the space between the core and outer shell.
@@ -277,11 +280,12 @@ public:
       if (!inner_particles[i].life)
         continue;
 
-      drawParticle(
+      if (drawParticle(
         inner_particles[i],
         INNER_FADE_LIFE,
         INNER_FADE_RANDOM
-      );
+      ))
+        any_visible = true;
     }
 
     // Slow core particles.
@@ -289,11 +293,12 @@ public:
       if (!core_particles[i].life)
         continue;
 
-      drawParticle(
+      if (drawParticle(
         core_particles[i],
         CORE_FADE_LIFE,
         CORE_FADE_RANDOM
-      );
+      ))
+        any_visible = true;
     }
   }
 
@@ -301,8 +306,8 @@ public:
     return state == ROCKET;
   }
 
-  bool isParticles() const {
-    return state == PARTICLES;
+  bool hasVisibleParticles() const {
+    return any_visible;
   }
 
   bool isRocketFirstHalf() const {
@@ -322,6 +327,8 @@ private:
 
   FireworkStyle style_storage{};
   const FireworkStyle *style = &style_storage;
+
+  bool any_visible = false;
 
   State state = WAITING;
 
@@ -483,7 +490,7 @@ private:
     );
   }
 
-  void drawParticle(
+  bool drawParticle(
     const Particle &particle,
     uint8_t fade_life,
     uint8_t fade_random
@@ -493,17 +500,19 @@ private:
 
     if (x < 0 || x >= DISPLAY_WIDTH ||
         y < 0 || y >= DISPLAY_HEIGHT)
-      return;
+      return false;
 
     // Fade by making older particles increasingly intermittent.
     if (particle.life < fade_life &&
         random(0, fade_random) > particle.life)
-      return;
+      return false;
 
     display.drawPixel(x, y, HIGH);
 
     if (y < MATRIX_SIZE)
       display_color[y][x] = style->color;
+
+    return true;
   }
 };
 
@@ -532,7 +541,7 @@ void updateStatusLEDs() {
       rx = true;
     else
       tx = true;
-  } else if (fireworks[0].isParticles()) {
+  } else if (fireworks[0].hasVisibleParticles()) {
     led = true;
   }
 
@@ -674,8 +683,8 @@ void loop() {
     dt = MAX_DT;
 
   updateFireworks(dt);
-  updateStatusLEDs();
   drawFireworks();
+  updateStatusLEDs();
 
   delay(FRAME_DELAY_MS);
 }
