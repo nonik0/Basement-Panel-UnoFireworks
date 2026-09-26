@@ -18,8 +18,8 @@ static const uint8_t MATRIX_BRIGHTNESS = 2;
 // Fireworks animation
 static const uint8_t MAX_FIREWORKS = 1;
 
-static const uint8_t MAX_OUTER_PARTICLES = 24;
-static const uint8_t MAX_INNER_PARTICLES = 12;
+static const uint8_t MAX_OUTER_PARTICLES = 20;
+static const uint8_t MAX_INNER_PARTICLES = 20;
 static const uint8_t MAX_CORE_PARTICLES = 8;
 
 static const uint16_t FRAME_DELAY_MS = 40;
@@ -27,7 +27,7 @@ static const float PHYSICS_FRAME_MS = 16.0f;
 static const float MAX_DT = 3.0f;
 
 // Firework status LEDs
-static const uint16_t FIREWORK_PAUSE_MS = 200;
+static const uint16_t FIREWORK_PAUSE_MS = 400;
 //static const uint8_t FIREWORK_STATUS_1_PIN = 4; // controlled by 16u2 firmware
 //static const uint8_t FIREWORK_STATUS_2_PIN = 5;
 static const uint8_t FIREWORK_STATUS_3_PIN = LED_BUILTIN;
@@ -196,9 +196,9 @@ struct Particle {
 class Firework {
 public:
   enum State {
-    WAITING,
+    FUSE,
     ROCKET,
-    PARTICLES
+    FIREWORK
   };
 
   void start() {
@@ -227,18 +227,18 @@ public:
   }
 
   void update(float dt) {
-    if (state == WAITING)
-      updateWaiting(dt);
+    if (state == FUSE)
+      updateFuse(dt);
     else if (state == ROCKET)
       updateRocket(dt);
     else
-      updateParticles(dt);
+      updateFirework(dt);
   }
 
   void draw() {
     any_visible = false;
 
-    if (state == WAITING)
+    if (state == FUSE)
       return;
 
     if (state == ROCKET) {
@@ -267,7 +267,7 @@ public:
       if (!outer_particles[i].life)
         continue;
 
-      if (drawParticle(
+      if (drawFirework(
         outer_particles[i],
         OUTER_FADE_LIFE,
         OUTER_FADE_RANDOM
@@ -280,7 +280,7 @@ public:
       if (!inner_particles[i].life)
         continue;
 
-      if (drawParticle(
+      if (drawFirework(
         inner_particles[i],
         INNER_FADE_LIFE,
         INNER_FADE_RANDOM
@@ -293,21 +293,31 @@ public:
       if (!core_particles[i].life)
         continue;
 
-      if (drawParticle(
+      if (drawFirework(
         core_particles[i],
         CORE_FADE_LIFE,
         CORE_FADE_RANDOM
       ))
         any_visible = true;
     }
+
+    // end firework once no particles are visible
+    if (!any_visible) {
+      state = FUSE;
+      fuse_remaining_ms = FIREWORK_PAUSE_MS;
+    }
+  }
+
+  bool isFuse() const {
+    return state == FUSE;
   }
 
   bool isRocket() const {
     return state == ROCKET;
   }
 
-  bool hasVisibleParticles() const {
-    return any_visible;
+  bool isFirework() const {
+    return state == FIREWORK;
   }
 
   bool isRocketFirstHalf() const {
@@ -330,19 +340,19 @@ private:
 
   bool any_visible = false;
 
-  State state = WAITING;
+  State state = FUSE;
 
   float rocket_x = 0;
   float rocket_y = 0;
   float rocket_vy = 0;
   uint8_t rocket_target_y = 0;
 
-  float wait_remaining_ms = 0;
+  float fuse_remaining_ms = 0;
 
-  void updateWaiting(float dt) {
-    wait_remaining_ms -= dt * PHYSICS_FRAME_MS;
+  void updateFuse(float dt) {
+    fuse_remaining_ms -= dt * PHYSICS_FRAME_MS;
 
-    if (wait_remaining_ms <= 0)
+    if (fuse_remaining_ms <= 0)
       start();
   }
 
@@ -354,7 +364,7 @@ private:
       explode();
   }
 
-  void updateParticles(float dt) {
+  void updateFirework(float dt) {
     bool particles_alive = false;
 
     // Outer particles.
@@ -405,16 +415,17 @@ private:
       core_particles[i].life--;
     }
 
+    // likely rarely invoked, draw() ends once no particles are visible
     if (!particles_alive) {
-      state = WAITING;
-      wait_remaining_ms = FIREWORK_PAUSE_MS;
+      state = FUSE;
+      fuse_remaining_ms = FIREWORK_PAUSE_MS;
     }
   }
 
   void explode() {
     // Outer particles.
     for (uint8_t i = 0; i < MAX_OUTER_PARTICLES; i++) {
-      initializeParticle(
+      initializeFirework(
         outer_particles[i],
         style->outer_speed_min,
         style->outer_speed_max,
@@ -425,7 +436,7 @@ private:
 
     // Middle particles.
     for (uint8_t i = 0; i < MAX_INNER_PARTICLES; i++) {
-      initializeParticle(
+      initializeFirework(
         inner_particles[i],
         style->inner_speed_min,
         style->inner_speed_max,
@@ -436,7 +447,7 @@ private:
 
     // Core particles.
     for (uint8_t i = 0; i < MAX_CORE_PARTICLES; i++) {
-      initializeParticle(
+      initializeFirework(
         core_particles[i],
         style->core_speed_min,
         style->core_speed_max,
@@ -445,10 +456,10 @@ private:
       );
     }
 
-    state = PARTICLES;
+    state = FIREWORK;
   }
 
-  void initializeParticle(
+  void initializeFirework(
     Particle &particle,
     float speed_min,
     float speed_max,
@@ -490,7 +501,7 @@ private:
     );
   }
 
-  bool drawParticle(
+  bool drawFirework(
     const Particle &particle,
     uint8_t fade_life,
     uint8_t fade_random
@@ -522,7 +533,6 @@ uint32_t last_frame = 0;
 bool last_status_rx = false;
 bool last_status_tx = false;
 bool last_status_led = false;
-bool status_leds_initialized = false;
 
 void setStatusLEDs(bool rx, bool tx, bool led) {
   // communicate over serial to custom 16u2 firmware to control TX/RX LEDs
@@ -541,12 +551,11 @@ void updateStatusLEDs() {
       rx = true;
     else
       tx = true;
-  } else if (fireworks[0].hasVisibleParticles()) {
+  } else if (fireworks[0].isFirework()) {
     led = true;
   }
 
-  if (!status_leds_initialized ||
-      rx != last_status_rx ||
+  if (rx != last_status_rx ||
       tx != last_status_tx ||
       led != last_status_led) {
     setStatusLEDs(rx, tx, led);
@@ -554,7 +563,6 @@ void updateStatusLEDs() {
     last_status_rx = rx;
     last_status_tx = tx;
     last_status_led = led;
-    status_leds_initialized = true;
   }
 }
 
