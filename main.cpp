@@ -4,6 +4,11 @@
 #include <Adafruit_GFX.h>
 #include "Adafruit_LEDBackpack.h"
 
+// TODO: particles need scale for velocity due to pixel size differences
+// differentiate fireworks more
+// core and inner particles need longer lifetime
+
+
 // Display
 static const uint8_t DISPLAY_WIDTH = 8;
 static const uint8_t DISPLAY_HEIGHT = 32;
@@ -45,14 +50,14 @@ static const int8_t PARTICLE_DIRECTION_MAX = 100;
 static const float PARTICLE_DIRECTION_SCALE = 100.0f;
 
 // Particle fade
-static const uint8_t OUTER_FADE_LIFE = 12;
-static const uint8_t OUTER_FADE_RANDOM = 10;
+static const uint8_t OUTER_FADE_LIFE = 24;
+static const uint8_t OUTER_FADE_RANDOM = 24;
 
-static const uint8_t INNER_FADE_LIFE = 10;
-static const uint8_t INNER_FADE_RANDOM = 8;
+static const uint8_t INNER_FADE_LIFE = 18;
+static const uint8_t INNER_FADE_RANDOM = 18;
 
-static const uint8_t CORE_FADE_LIFE = 4;
-static const uint8_t CORE_FADE_RANDOM = 4;
+static const uint8_t CORE_FADE_LIFE = 10;
+static const uint8_t CORE_FADE_RANDOM = 10;
 
 // Top matrix column mapping.
 static const uint8_t TOP_COLUMN[DISPLAY_WIDTH] PROGMEM = {
@@ -88,88 +93,70 @@ struct FireworkStyle {
 };
 
 static const FireworkStyle FIREWORK_STYLES[] PROGMEM = {
-  // Classic
-  {
-    LED_RED,
-
-    // Outer
-    0.45f,
-    0.70f,
-    0.025f,
-    0.980f,
-    24,
-    40,
-
-    // Middle
-    0.28f,
-    0.45f,
-    0.015f,
-    0.975f,
-    18,
-    30,
-
-    // Core
-    0.04f,
-    0.07f,
-    0.001f,
-    6,
-    10
-  },
-
-  // Wide
-  {
-    LED_YELLOW,
-
-    // Outer
-    0.55f,
-    0.80f,
-    0.030f,
-    0.985f,
-    20,
-    34,
-
-    // Middle
-    0.32f,
-    0.50f,
-    0.018f,
-    0.980f,
-    16,
-    28,
-
-    // Core
-    0.05f,
-    0.08f,
-    0.001f,
-    6,
-    9
-  },
-
-  // Floaty
+  // Standard (green)
   {
     LED_GREEN,
 
     // Outer
-    0.25f,
-    0.45f,
-    0.018f,
-    0.955f,
-    35,
-    55,
+    0.15f, 0.26f,
+    0.0025f,
+    0.925f,
+    50, 75,
 
     // Middle
-    0.16f,
-    0.30f,
-    0.010f,
-    0.950f,
-    24,
-    38,
+    0.08f, 0.16f,
+    0.0018f,
+    0.915f,
+    38, 58,
 
     // Core
-    0.03f,
-    0.06f,
+    0.020f, 0.040f,
+    0.0004f,
+    20, 32
+  },
+
+  // Red - punchier, a bit shorter
+  {
+    LED_RED,
+
+    // Outer
+    0.17f, 0.29f,
+    0.0035f,
+    0.925f,
+    42, 64,
+
+    // Middle
+    0.09f, 0.17f,
+    0.0022f,
+    0.915f,
+    32, 48,
+
+    // Core
+    0.025f, 0.045f,
     0.0005f,
-    7,
-    10
+    18, 28
+  },
+
+  // Yellow - widest, hangs a bit longer
+  {
+    LED_YELLOW,
+
+    // Outer
+    0.20f, 0.33f,
+    0.0030f,
+    0.935f,
+    46, 68,
+
+    // Middle
+    0.11f, 0.19f,
+    0.0020f,
+    0.925f,
+    34, 52,
+
+    // Core
+    0.030f, 0.050f,
+    0.0004f,
+    20, 30
   }
 };
 
@@ -488,9 +475,9 @@ private:
     } while (magnitude < 0.2f);
 
     float speed = random(
-      (int)(speed_min * 100.0f),
-      (int)(speed_max * 100.0f) + 1
-    ) / 100.0f;
+      (long)(speed_min * 1000.0f + 0.5f),
+      (long)(speed_max * 1000.0f + 0.5f) + 1
+    ) / 1000.0f;
 
     particle.vx = dx / magnitude * speed;
     particle.vy = dy / magnitude * speed;
